@@ -7,6 +7,13 @@
 </head>
 <body>
     <h2>Welcome, {{ current_user.name }}</h2>
+
+    <!-- Display User Account Details -->
+    <h3>Bank Account Details</h3>
+    <p><strong>Account Number:</strong> {{ account_number }}</p>
+    <p><strong>IFSC Code:</strong> {{ ifsc_code }}</p>
+    <p><strong>Bank Name:</strong> {{ bank_name }}</p>
+
     <h3>Upload Images</h3>
     <form action="{{ url_for('upload') }}" method="POST" enctype="multipart/form-data">
         <input type="file" name="images" multiple required>

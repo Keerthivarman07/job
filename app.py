@@ -2,6 +2,7 @@ from flask import Flask, render_template, redirect, url_for, request, flash
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
+from flask_migrate import Migrate
 import os
 
 app = Flask(__name__)
@@ -11,6 +12,7 @@ app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB limit
 
 db = SQLAlchemy(app)
+migrate = Migrate(app, db)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
@@ -23,6 +25,9 @@ class User(db.Model, UserMixin):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     mobile = db.Column(db.String(20), unique=True, nullable=False)
+    account_number = db.Column(db.String(20), unique=True, nullable=False)
+    ifsc_code = db.Column(db.String(20), nullable=False)
+    bank_name = db.Column(db.String(100), nullable=False)
     password = db.Column(db.String(256), nullable=False)  # Store hashed password
     is_admin = db.Column(db.Boolean, default=False)
 
@@ -35,15 +40,22 @@ class Image(db.Model):
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
+
 @app.route('/')
 def home():
     return redirect(url_for("login"))
+
 # User Registration
+import csv
+
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
         name = request.form['name']
         mobile = request.form['mobile']
+        account_number = request.form['account_number']
+        ifsc_code = request.form['ifsc_code']
+        bank_name = request.form['bank_name']
         password = request.form['password']
 
         # Check if user already exists
@@ -55,13 +67,38 @@ def register():
         # Hash password before storing
         hashed_password = generate_password_hash(password, method='pbkdf2:sha256')
 
-        user = User(name=name, mobile=mobile, password=hashed_password, is_admin=False)
+        # Save user in database
+        user = User(
+            name=name,
+            mobile=mobile,
+            account_number=account_number,
+            ifsc_code=ifsc_code,
+            bank_name=bank_name,
+            password=hashed_password,
+            is_admin=False
+        )
         db.session.add(user)
         db.session.commit()
+
+        # Save user details in a CSV file
+        csv_filename = "users.csv"
+        file_exists = os.path.isfile(csv_filename)
+
+        with open(csv_filename, mode="a", newline="") as file:
+            writer = csv.writer(file)
+            
+            # Write the header if the file is newly created
+            if not file_exists:
+                writer.writerow(["Name", "Mobile", "Account Number", "IFSC Code", "Bank Name"])
+            
+            # Write user details
+            writer.writerow([name, mobile, account_number, ifsc_code, bank_name])
+
         flash("Registered successfully! Please login.", "success")
         return redirect(url_for('login'))
 
     return render_template('register.html')
+
 
 # User & Admin Login
 @app.route('/login', methods=['GET', 'POST'])
@@ -95,8 +132,18 @@ def dashboard():
         return render_template('admin_dashboard.html', users=users)
     
     images = Image.query.filter_by(user_id=current_user.id).all()
-    return render_template('user_dashboard.html', images=images)
 
+    # Pass user details to the template
+    return render_template(
+        'user_dashboard.html', 
+        images=images, 
+        account_number=current_user.account_number,
+        ifsc_code=current_user.ifsc_code,
+        bank_name=current_user.bank_name
+    )
+
+
+# Image Upload
 # Image Upload
 @app.route('/upload', methods=['POST'])
 @login_required
@@ -106,10 +153,13 @@ def upload():
         return redirect(url_for('dashboard'))
 
     files = request.files.getlist('images')
-    user_images = Image.query.filter_by(user_id=current_user.id).count()
 
-    if user_images + len(files) > 10:
-        flash("You can upload only up to 10 images!", "danger")
+    # Get the current image count for the user
+    user_images_count = Image.query.filter_by(user_id=current_user.id).count()
+
+    # Check if the total uploads exceed 100
+    if user_images_count + len(files) > 100:
+        flash("You can upload only up to 100 images!", "danger")
         return redirect(url_for('dashboard'))
 
     for file in files:
@@ -160,12 +210,20 @@ if __name__ == "__main__":
         db.create_all()
 
         # Create a predefined admin if it does not exist
-        admin_mobile = "9999999999"  # Set your admin mobile number
-        admin_password = "admin123"  # Set admin password
+        admin_mobile = "9999999999"
+        admin_password = "admin123"
         admin = User.query.filter_by(mobile=admin_mobile).first()
         if not admin:
             hashed_admin_password = generate_password_hash(admin_password, method='pbkdf2:sha256')
-            admin = User(name="Admin", mobile=admin_mobile, password=hashed_admin_password, is_admin=True)
+            admin = User(
+                name="Admin", 
+                mobile=admin_mobile, 
+                account_number="0000000000",  # Default admin details
+                ifsc_code="BANK000000",
+                bank_name="Admin Bank",
+                password=hashed_admin_password,
+                is_admin=True
+            )
             db.session.add(admin)
             db.session.commit()
             print("Admin account created with mobile:", admin_mobile)
